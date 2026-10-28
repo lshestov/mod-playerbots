@@ -9,11 +9,13 @@
 #include "BisListMgr.h"
 #include "BudgetValues.h"
 #include "Event.h"
+#include "NPCPackets.h"
 #include "PlayerbotFactory.h"
 #include "PlayerbotTextMgr.h"
 #include "Playerbots.h"
 #include "ReputationMgr.h"
 #include "Trainer.h"
+#include "WorldSession.h"
 
 bool TrainerAction::Execute(Event event)
 {
@@ -102,6 +104,9 @@ Creature* TrainerAction::GetCreatureTarget()
 
 void TrainerAction::Iterate(Creature* creature, bool learnSpells, uint32 spellId)
 {
+    if (IsSelfBot(bot) && !bot->GetNPCIfCanInteractWith(creature->GetGUID(), UNIT_NPC_FLAG_TRAINER))
+        return;
+
     TellHeader(creature);
 
     Trainer::Trainer* trainer = sObjectMgr->GetTrainer(creature->GetEntry());
@@ -138,7 +143,22 @@ void TrainerAction::Iterate(Creature* creature, bool learnSpells, uint32 spellId
         std::ostringstream out;
         out << chat->FormatSpell(spellInfo) << chat->formatMoney(cost);
 
-        if (learnSpells)
+        if (learnSpells && IsSelfBot(bot))
+        {
+            // Use the same range, eligibility and money checks as a player's purchase, without bot cheats.
+            if (!bot->HasEnoughMoney(cost))
+                out << " - too expensive";
+            else
+            {
+                WorldPacket packet(CMSG_TRAINER_BUY_SPELL);
+                packet << creature->GetGUID() << trainerSpell->SpellId;
+                WorldPackets::NPC::TrainerBuySpell purchase(std::move(packet));
+                purchase.Read();
+                bot->GetSession()->HandleTrainerBuySpellOpcode(purchase);
+                out << (trainer->CanTeachSpell(bot, trainerSpell) ? " - not learned" : " - learned");
+            }
+        }
+        else if (learnSpells)
             Learn(spellInfo, cost, out);
 
         botAI->TellMaster(out);

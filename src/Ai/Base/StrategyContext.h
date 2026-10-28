@@ -47,6 +47,9 @@
 #include "ReturnStrategy.h"
 #include "RpgStrategy.h"
 #include "RunawayStrategy.h"
+#include "SellGrayStrategy.h"
+#include "SelfBotQuestStrategy.h"
+#include "SelfBotTrainerStrategy.h"
 #include "StayStrategy.h"
 #include "TankAssistStrategy.h"
 #include "TellTargetStrategy.h"
@@ -64,6 +67,10 @@ public:
     {
         creators["racials"] = &StrategyContext::racials;
         creators["loot"] = &StrategyContext::loot;
+        creators["sell gray"] = &StrategyContext::SellGray;
+        creators["selfbot quest"] = &StrategyContext::SelfBotQuest;
+        creators["selfbot quest item combat"] = &StrategyContext::SelfBotQuestItemCombat;
+        creators["selfbot trainer"] = &StrategyContext::SelfBotTrainer;
         creators["gather"] = &StrategyContext::gather;
         creators["emote"] = &StrategyContext::emote;
         creators["passive"] = &StrategyContext::passive;
@@ -136,6 +143,10 @@ public:
     }
 
 private:
+    static Strategy* SellGray(PlayerbotAI* botAI) { return new SellGrayStrategy(botAI); }
+    static Strategy* SelfBotQuest(PlayerbotAI* botAI) { return new SelfBotQuestStrategy(botAI); }
+    static Strategy* SelfBotQuestItemCombat(PlayerbotAI* botAI) { return new SelfBotQuestItemCombatStrategy(botAI); }
+    static Strategy* SelfBotTrainer(PlayerbotAI* botAI) { return new SelfBotTrainerStrategy(botAI); }
     static Strategy* behind(PlayerbotAI* botAI) { return new SetBehindCombatStrategy(botAI); }
     static Strategy* ranged(PlayerbotAI* botAI) { return new RangedCombatStrategy(botAI); }
     static Strategy* close(PlayerbotAI* botAI) { return new MeleeCombatStrategy(botAI); }

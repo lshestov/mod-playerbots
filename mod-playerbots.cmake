@@ -8,3 +8,10 @@
 target_link_libraries(modules
   PRIVATE
     mysql)
+
+# The core's module PCH hook is disabled. Reuse its stable core headers without
+# putting frequently changed playerbot headers in the precompiled header.
+option(PLAYERBOTS_USE_PCH "Use precompiled headers for the MSVC modules target" OFF)
+if (PLAYERBOTS_USE_PCH AND MSVC AND USE_SCRIPTPCH)
+  target_precompile_headers(modules PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../ModulesPCH.h")
+endif()

@@ -8,6 +8,7 @@
 #include "BroadcastHelper.h"
 #include "PlayerbotAIConfig.h"
 #include "PlayerbotFactory.h"
+#include "Playerbots.h"
 #include "RandomPlayerbotMgr.h"
 #include "SharedDefines.h"
 #include "SpellMgr.h"
@@ -68,6 +69,10 @@ void AutoMaintenanceOnLevelupAction::AutoLearnSpell()
 void AutoMaintenanceOnLevelupAction::LearnSpells(std::ostringstream* out)
 {
     BroadcastHelper::BroadcastLevelup(botAI, bot);
+    // A selfbot earns class spells at a trainer and quest spells from actual quest rewards.
+    if (IsSelfBot(bot))
+        return;
+
     if (sPlayerbotAIConfig.AutoLearnTrainerSpells && sRandomPlayerbotMgr.IsRandomBot(bot))
         LearnTrainerSpells(out);
 

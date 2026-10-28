@@ -5,11 +5,13 @@
  */
 
 #include "Engine.h"
+
 #include "Action.h"
 #include "Event.h"
 #include "PerfMonitor.h"
 #include "Playerbots.h"
 #include "Queue.h"
+#include "SelfBotDefenseActions.h"
 #include "Strategy.h"
 #include "Timer.h"
 
@@ -181,7 +183,7 @@ bool Engine::DoNextAction(Unit* /*unit*/, uint32 /*depth*/, bool minimal)
         {
             LogAction("A:%s - UNKNOWN", actionNode->getName().c_str());
         }
-        else if (action->isUseful())
+        else if (IsSelfBotDefenseAction(botAI, action) && action->isUseful())
         {
             // Apply multipliers early to avoid unnecessary iterations
             for (Multiplier* multiplier : multipliers)
@@ -329,6 +331,12 @@ ActionResult Engine::ExecuteAction(std::string const name, Event event, std::str
     {
         delete actionNode;
         return ACTION_RESULT_UNKNOWN;
+    }
+
+    if (!IsSelfBotDefenseAction(botAI, action))
+    {
+        delete actionNode;
+        return ACTION_RESULT_USELESS;
     }
 
     if (!qualifier.empty())

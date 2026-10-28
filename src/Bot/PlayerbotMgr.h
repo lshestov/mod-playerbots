@@ -7,9 +7,11 @@
 #ifndef PLAYERBOTS_PLAYERBOTMGR_H
 #define PLAYERBOTS_PLAYERBOTMGR_H
 
+#include "BotProtocol.h"
 #include "ObjectGuid.h"
 #include "Player.h"
 #include "PlayerbotAIBase.h"
+#include "SelfBotController.h"
 
 class ChatHandler;
 class PlayerbotAI;
@@ -79,6 +81,9 @@ public:
     virtual ~PlayerbotMgr();
 
     static bool HandlePlayerbotMgrCommand(ChatHandler* handler, char const* args);
+    static void SendSelfBotStatus(Player* player, std::string const& note = {});
+    SelfBotController& GetSelfBotController() { return _selfBotController; }
+    BotProtocol& GetBotProtocol() { return _botProtocol; }
     void HandleMasterIncomingPacket(WorldPacket const& packet);
     void HandleMasterOutgoingPacket(WorldPacket const& packet);
     void HandleCommand(uint32 type, std::string const text);
@@ -102,6 +107,8 @@ protected:
     void CheckTellErrors(uint32 elapsed);
 
 private:
+    SelfBotController _selfBotController;
+    BotProtocol _botProtocol;
     Player* const master;
     PlayerBotErrorMap errors;
     time_t lastErrorTell;

@@ -61,6 +61,9 @@
 #include "RpgSubActions.h"
 #include "RtiAction.h"
 #include "SayAction.h"
+#include "SellGrayStrategy.h"
+#include "SelfBotQuestStrategy.h"
+#include "SelfBotTrainerStrategy.h"
 #include "ShareQuestAction.h"
 #include "StayActions.h"
 #include "SuggestWhatToDoAction.h"
@@ -79,6 +82,15 @@ public:
     ActionContext()
     {
         creators["mark rti"] = &ActionContext::mark_rti;
+        creators["choose gray vendor"] = &ActionContext::ChooseGrayVendor;
+        creators["choose selfbot quest"] = &ActionContext::ChooseSelfBotQuest;
+        creators["visit selfbot trainer"] = &ActionContext::VisitSelfBotTrainer;
+        creators["move to selfbot quest"] = &ActionContext::MoveToSelfBotQuest;
+        creators["interact selfbot quest"] = &ActionContext::InteractSelfBotQuest;
+        creators["selfbot quest item combat"] = &ActionContext::SelfBotQuestItemCombat;
+        creators["move to gray vendor"] = &ActionContext::MoveToGrayVendor;
+        creators["sell gray loot"] = &ActionContext::SellGrayLoot;
+        creators["return from gray vendor"] = &ActionContext::ReturnFromGrayVendor;
         creators["set return position"] = &ActionContext::set_return_position;
         creators["rpg"] = &ActionContext::rpg;
         creators["crpg"] = &ActionContext::crpg;
@@ -282,6 +294,15 @@ public:
     }
 
 private:
+    static Action* ChooseGrayVendor(PlayerbotAI* botAI) { return new ChooseGrayVendorAction(botAI); }
+    static Action* ChooseSelfBotQuest(PlayerbotAI* botAI) { return new ChooseSelfBotQuestAction(botAI); }
+    static Action* VisitSelfBotTrainer(PlayerbotAI* botAI) { return new VisitSelfBotTrainerAction(botAI); }
+    static Action* MoveToSelfBotQuest(PlayerbotAI* botAI) { return new MoveToSelfBotQuestAction(botAI); }
+    static Action* InteractSelfBotQuest(PlayerbotAI* botAI) { return new InteractSelfBotQuestAction(botAI); }
+    static Action* SelfBotQuestItemCombat(PlayerbotAI* botAI) { return new SelfBotQuestItemCombatAction(botAI); }
+    static Action* MoveToGrayVendor(PlayerbotAI* botAI) { return new MoveToGrayVendorAction(botAI); }
+    static Action* SellGrayLoot(PlayerbotAI* botAI) { return new SellGrayLootAction(botAI); }
+    static Action* ReturnFromGrayVendor(PlayerbotAI* botAI) { return new ReturnFromGrayVendorAction(botAI); }
     static Action* give_water(PlayerbotAI* botAI) { return new GiveWaterAction(botAI); }
     static Action* give_food(PlayerbotAI* botAI) { return new GiveFoodAction(botAI); }
     static Action* ra(PlayerbotAI* botAI) { return new RemoveAuraAction(botAI); }

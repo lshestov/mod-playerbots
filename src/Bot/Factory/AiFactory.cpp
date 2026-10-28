@@ -16,6 +16,7 @@
 #include "PaladinAiObjectContext.h"
 #include "PlayerbotAI.h"
 #include "PlayerbotAIConfig.h"
+#include "PlayerbotMgr.h"
 #include "Playerbots.h"
 #include "PriestAiObjectContext.h"
 #include "ReactionEngine.h"
@@ -402,6 +403,9 @@ void AiFactory::AddDefaultCombatStrategies(Player* player, PlayerbotAI* const fa
             break;
     }
 
+    if (sPlayerbotAIConfig.SelfBotQuesting && IsSelfBot(player))
+        engine->addStrategy("selfbot quest item combat", false);
+
     if (PlayerbotAI::IsTank(player, true))
         engine->addStrategy("tank face", false);
 
@@ -712,6 +716,10 @@ void AiFactory::AddDefaultNonCombatStrategies(Player* player, PlayerbotAI* const
             nonCombatEngine->removeStrategy("mount", false);
         }
     }
+
+    if (facade && facade->GetMaster() == player)
+        if (PlayerbotMgr* manager = GET_PLAYERBOT_MGR(player))
+            manager->GetSelfBotController().ApplySettingsToEngine(*nonCombatEngine);
 }
 
 Engine* AiFactory::createNonCombatEngine(Player* player, PlayerbotAI* const facade, AiObjectContext* aiObjectContext)

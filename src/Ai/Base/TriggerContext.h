@@ -19,6 +19,9 @@
 #include "NewRpgStrategy.h"
 #include "NewRpgTriggers.h"
 #include "PullTriggers.h"
+#include "SellGrayStrategy.h"
+#include "SelfBotQuestStrategy.h"
+#include "SelfBotTrainerStrategy.h"
 #include "PvpTriggers.h"
 #include "RangeTriggers.h"
 #include "RpgTriggers.h"
@@ -44,6 +47,10 @@ public:
         creators["random"] = &TriggerContext::Random;
         creators["seldom"] = &TriggerContext::seldom;
         creators["often"] = &TriggerContext::often;
+        creators["gray vendor"] = &TriggerContext::GrayVendor;
+        creators["selfbot quest"] = &TriggerContext::SelfBotQuest;
+        creators["selfbot quest item combat"] = &TriggerContext::SelfBotQuestItemCombat;
+        creators["selfbot trainer"] = &TriggerContext::SelfBotTrainer;
         creators["very often"] = &TriggerContext::very_often;
 
         creators["force rebuff pending"] = &TriggerContext::force_rebuff_pending;
@@ -252,6 +259,10 @@ public:
     }
 
 private:
+    static Trigger* GrayVendor(PlayerbotAI* botAI) { return new GrayVendorTrigger(botAI); }
+    static Trigger* SelfBotQuest(PlayerbotAI* botAI) { return new SelfBotQuestTrigger(botAI); }
+    static Trigger* SelfBotQuestItemCombat(PlayerbotAI* botAI) { return new SelfBotQuestItemCombatTrigger(botAI); }
+    static Trigger* SelfBotTrainer(PlayerbotAI* botAI) { return new SelfBotTrainerTrigger(botAI); }
     static Trigger* give_food(PlayerbotAI* botAI) { return new GiveFoodTrigger(botAI); }
     static Trigger* give_water(PlayerbotAI* botAI) { return new GiveWaterTrigger(botAI); }
     static Trigger* no_rti(PlayerbotAI* botAI) { return new NoRtiTrigger(botAI); }

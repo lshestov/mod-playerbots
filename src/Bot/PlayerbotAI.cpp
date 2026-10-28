@@ -5,12 +5,20 @@
  */
 
 #include "PlayerbotAI.h"
+
+#include <cmath>
+#include <mutex>
+#include <sstream>
+#include <string>
+#include <unordered_set>
+
 #include "AiFactory.h"
 #include "BudgetValues.h"
 #include "ChannelMgr.h"
 #include "CharacterPackets.h"
 #include "ChatHelper.h"
 #include "CheckMountStateAction.h"
+#include "CombatManager.h"
 #include "Common.h"
 #include "CreatureData.h"
 #include "DBCStores.h"
@@ -30,9 +38,11 @@
 #include "MotionMaster.h"
 #include "MoveSplineInit.h"
 #include "NewRpgStrategy.h"
+#include "ObjectAccessor.h"
 #include "ObjectGuid.h"
 #include "ObjectMgr.h"
 #include "PerfMonitor.h"
+#include "Pet.h"
 #include "Player.h"
 #include "PlayerbotAIConfig.h"
 #include "PlayerbotGuildMgr.h"
@@ -46,6 +56,7 @@
 #include "ReactionEngine.h"
 #include "SayAction.h"
 #include "ScriptMgr.h"
+#include "SelfBotDefenseActions.h"
 #include "ServerFacade.h"
 #include "SharedDefines.h"
 #include "SocialMgr.h"
@@ -55,10 +66,15 @@
 #include "Unit.h"
 #include "UpdateTime.h"
 #include "Vehicle.h"
-#include <cmath>
-#include <mutex>
-#include <sstream>
-#include <string>
+
+struct SelfBotDisconnectState
+{
+    bool Defending = false;
+    bool EngineInitialized = false;
+    std::unordered_set<ObjectGuid> Opponents;
+    ObjectGuid PetGuid;
+    ReactStates PetReactState = REACT_PASSIVE;
+};
 
 namespace
 {
@@ -162,6 +178,9 @@ PlayerbotAI::PlayerbotAI(Player* bot)
     engines[BOT_STATE_DEAD] = AiFactory::createDeadEngine(bot, this, aiObjectContext);
     engines[BOT_STATE_REACTION] = reactionEngine = AiFactory::createReactionEngine(bot, this, aiObjectContext);
 
+    for (Engine* engine : engines)
+        engine->AddActionExecutionListener(CreateSelfBotDefenseListener(this));
+
     if (sPlayerbotAIConfig.ApplyInstanceStrategies)
         ApplyInstanceStrategies(bot->GetMapId());
 
@@ -247,8 +266,208 @@ PlayerbotAI::~PlayerbotAI()
         PlayerbotsMgr::instance().RemovePlayerBotData(bot->GetGUID(), true);
 }
 
+bool PlayerbotAI::IsSelfBotSessionInactive() const
+{
+    return sPlayerbotAIConfig.SelfBotStopOnDisconnect && bot && master == bot &&
+           (!bot->GetSession() || bot->GetSession()->IsSocketClosed() || bot->GetSession()->IsLoggingOut());
+}
+
+bool PlayerbotAI::IsSelfBotDefending() const
+{
+    return IsSelfBotSessionInactive() && _selfBotDisconnect && _selfBotDisconnect->Defending;
+}
+
+void PlayerbotAI::RestoreSelfBotPetState()
+{
+    if (!bot || !_selfBotDisconnect)
+        return;
+    if (Pet* pet = bot->GetPet(); pet && pet->GetGUID() == _selfBotDisconnect->PetGuid)
+        pet->SetReactState(_selfBotDisconnect->PetReactState);
+}
+
+bool PlayerbotAI::IsSelfBotDefenseTarget(Unit const* target) const
+{
+    return IsSelfBotDefending() && target && target->IsInWorld() && !target->IsDuringRemoveFromWorld() &&
+           target->IsAlive() && target->GetMap() == bot->GetMap() &&
+           _selfBotDisconnect->Opponents.count(target->GetGUID()) && bot->GetCombatManager().IsInCombatWith(target) &&
+           bot->IsValidAttackTarget(target);
+}
+
+Unit* PlayerbotAI::GetSelfBotDefenseTarget() const
+{
+    if (!IsSelfBotDefending() || !bot->IsInWorld() || !bot->IsAlive() || !bot->IsInCombat())
+        return nullptr;
+
+    if (Unit* victim = bot->GetVictim(); IsSelfBotDefenseTarget(victim))
+        return victim;
+
+    for (ObjectGuid const& guid : _selfBotDisconnect->Opponents)
+        if (Unit* target = ObjectAccessor::GetUnit(*bot, guid); IsSelfBotDefenseTarget(target))
+            return target;
+
+    return nullptr;
+}
+
+void PlayerbotAI::StopSelfBotActions()
+{
+    if (!bot->GetSession() || !bot->IsInWorld() || bot->IsDuringRemoveFromWorld() || bot->IsBeingTeleported())
+        return;
+
+    // Fear, knockback and taxi movement are controlled by the world, not the autopilot.
+    MotionMaster* motion = bot->GetMotionMaster();
+    if (!bot->IsInFlight())
+    {
+        if (motion->GetMotionSlot(MOTION_SLOT_ACTIVE))
+            motion->MovementExpiredOnSlot(MOTION_SLOT_ACTIVE, false);
+        if (!motion->GetMotionSlot(MOTION_SLOT_CONTROLLED))
+            bot->StopMoving();
+    }
+
+    // Movement finalization may restart an attack; preserve attackers and threat.
+    bot->AttackStop();
+    bot->InterruptNonMeleeSpells(true);
+    bot->SpellQueue.clear();
+    spellInterruptRequested = false;
+}
+
+bool PlayerbotAI::UpdateSelfBotSessionState()
+{
+    if (!bot || master != bot)
+        return false;
+
+    if (IsSelfBotSessionInactive())
+    {
+        bool const firstSuspension = !_selfBotSessionSuspended;
+        if (firstSuspension)
+        {
+            _selfBotSessionSuspended = true;
+            _selfBotDisconnect = std::make_unique<SelfBotDisconnectState>();
+            _selfBotSessionToken.reset();
+            chatCommands.clear();
+            chatReplies.clear();
+            botOutgoingPacketHandlers.Clear();
+            masterIncomingPacketHandlers.Clear();
+            masterOutgoingPacketHandlers.Clear();
+            if (reactionEngine)
+                reactionEngine->ResetReactions();
+
+            if (bot->GetSession() && bot->GetSession()->IsSocketClosed() && !bot->GetSession()->IsLoggingOut() &&
+                bot->IsInWorld() && !bot->IsDuringRemoveFromWorld() && !bot->IsBeingTeleported() && bot->IsAlive() &&
+                bot->IsInCombat())
+            {
+                auto captureOpponents = [this](auto const& references)
+                {
+                    for (auto const& [guid, reference] : references)
+                        if (!reference->IsSuppressedFor(bot))
+                            _selfBotDisconnect->Opponents.insert(guid);
+                };
+                captureOpponents(bot->GetCombatManager().GetPvECombatRefs());
+                captureOpponents(bot->GetCombatManager().GetPvPCombatRefs());
+                _selfBotDisconnect->Defending = !_selfBotDisconnect->Opponents.empty();
+            }
+
+            if (Pet* pet = bot->GetPet())
+            {
+                _selfBotDisconnect->PetGuid = pet->GetGUID();
+                _selfBotDisconnect->PetReactState = pet->GetReactState();
+            }
+            StopSelfBotActions();
+            ResetActionDuration();
+        }
+
+        if (Pet* pet = bot->GetPet())
+        {
+            pet->SetReactState(REACT_PASSIVE);
+            pet->AttackStop();
+            pet->InterruptNonMeleeSpells(true);
+        }
+
+        bool const wasDefending = _selfBotDisconnect->Defending;
+        Unit* target = GetSelfBotDefenseTarget();
+        if (!bot->GetSession() || bot->GetSession()->IsLoggingOut() || !target)
+            _selfBotDisconnect->Defending = false;
+
+        if (_selfBotDisconnect->Defending)
+        {
+            if (bot->GetVictim() && !IsSelfBotDefenseTarget(bot->GetVictim()))
+                bot->AttackStop();
+            for (CurrentSpellTypes spellType :
+                 {CURRENT_GENERIC_SPELL, CURRENT_CHANNELED_SPELL, CURRENT_AUTOREPEAT_SPELL})
+                if (Spell* spell = bot->GetCurrentSpell(spellType);
+                    spell && !IsSelfBotDefenseSpell(this, spell->GetSpellInfo()->Id, spell->m_targets.GetUnitTarget()))
+                    bot->InterruptSpell(spellType);
+            if (firstSuspension)
+                LOG_INFO("playerbots",
+                         "SelfBot {} defending: opponents={}, target={}, xp={}, health={}, map={}, pos=({}, {}, {})",
+                         bot->GetGUID().ToString(), _selfBotDisconnect->Opponents.size(), target->GetGUID().ToString(),
+                         bot->GetUInt32Value(PLAYER_XP), bot->GetHealth(), bot->GetMapId(), bot->GetPositionX(),
+                         bot->GetPositionY(), bot->GetPositionZ());
+        }
+        else
+        {
+            StopSelfBotActions();
+            if (firstSuspension || wasDefending)
+            {
+                aiObjectContext->GetValue<Unit*>("current target")->Set(nullptr);
+                bot->SetSelection(ObjectGuid::Empty);
+                LOG_INFO("playerbots",
+                         "SelfBot {} suspended: reason={}, level={}, xp={}, health={}, map={}, pos=({}, {}, {})",
+                         bot->GetGUID().ToString(),
+                         wasDefending ? "defense finished" : "client disconnected or logging out", bot->GetLevel(),
+                         bot->GetUInt32Value(PLAYER_XP), bot->GetHealth(), bot->GetMapId(), bot->GetPositionX(),
+                         bot->GetPositionY(), bot->GetPositionZ());
+            }
+        }
+
+        return true;
+    }
+
+    if (_selfBotSessionSuspended)
+    {
+        if (!bot->GetSession() || bot->GetSession()->IsSocketClosed() || bot->GetSession()->IsLoggingOut() ||
+            !bot->IsInWorld() || bot->IsDuringRemoveFromWorld() || bot->IsBeingTeleported() || bot->IsInFlight() ||
+            bot->GetMotionMaster()->GetMotionSlot(MOTION_SLOT_CONTROLLED))
+            return true;
+
+        botOutgoingPacketHandlers.Clear();
+        masterIncomingPacketHandlers.Clear();
+        masterOutgoingPacketHandlers.Clear();
+        chatCommands.clear();
+        chatReplies.clear();
+        RestoreSelfBotPetState();
+        Reset(true);
+        _selfBotDisconnect.reset();
+        _selfBotSessionSuspended = false;
+        LOG_INFO("playerbots", "SelfBot {} resumed: client connected", bot->GetGUID().ToString());
+    }
+
+    return false;
+}
+
+void PlayerbotAI::UpdateSelfBotDefense(uint32 elapsed)
+{
+    if (!IsSelfBotDefending() || !bot->IsInWorld() || bot->IsDuringRemoveFromWorld() || bot->IsBeingTeleported() ||
+        bot->IsInFlight() || bot->GetMotionMaster()->GetMotionSlot(MOTION_SLOT_CONTROLLED))
+        return;
+
+    nextAICheckDelay = nextAICheckDelay > elapsed ? nextAICheckDelay - elapsed : 0;
+    if (bot->IsNonMeleeSpellCast(true))
+        return;
+    if (!CanUpdateAI())
+        return;
+
+    DoNextAction();
+    YieldThread(bot, GetReactDelay());
+}
+
 void PlayerbotAI::UpdateAI(uint32 elapsed, bool minimal)
 {
+    if (UpdateSelfBotSessionState())
+    {
+        UpdateSelfBotDefense(elapsed);
+        return;
+    }
+
     // Handle the AI check delay
     if (nextAICheckDelay > elapsed)
         nextAICheckDelay -= elapsed;
@@ -541,6 +760,8 @@ void PlayerbotAI::UpdateAIGroupMaster()
 
 void PlayerbotAI::UpdateAIInternal([[maybe_unused]] uint32 elapsed, bool minimal)
 {
+    if (IsSelfBotSessionInactive())
+        return;
 
     if (!bot || !bot->GetSession())
         return;
@@ -668,6 +889,9 @@ void PlayerbotAI::HandleCommands()
 std::map<std::string, ChatMsg> chatMap;
 void PlayerbotAI::HandleCommand(uint32 type, std::string const& text, Player& fromPlayer, const uint32 lang)
 {
+    if (IsSelfBotSessionInactive())
+        return;
+
     if (!bot)
         return;
 
@@ -1024,6 +1248,9 @@ bool PlayerbotAI::IsAllowedCommand(std::string const text)
 
 void PlayerbotAI::HandleCommand(uint32 type, std::string const text, Player* fromPlayer)
 {
+    if (IsSelfBotSessionInactive())
+        return;
+
     if (!GetSecurity()->CheckLevelFor(PLAYERBOT_SECURITY_INVITE, type != CHAT_MSG_WHISPER, fromPlayer))
         return;
 
@@ -1563,6 +1790,23 @@ void PlayerbotAI::ChangeEngineOnNonCombat()
 
 void PlayerbotAI::DoNextAction(bool min)
 {
+    if (IsSelfBotSessionInactive())
+    {
+        if (Unit* target = GetSelfBotDefenseTarget())
+        {
+            ChangeEngine(BOT_STATE_COMBAT);
+            if (!_selfBotDisconnect->EngineInitialized)
+            {
+                currentEngine->Init();
+                _selfBotDisconnect->EngineInitialized = true;
+            }
+            aiObjectContext->GetValue<Unit*>("current target")->Set(target);
+            bot->SetSelection(target->GetGUID());
+            currentEngine->DoNextAction(nullptr, 0, false);
+        }
+        return;
+    }
+
     if (!bot->IsInWorld() || bot->IsBeingTeleported() || (GetMaster() && GetMaster()->IsBeingTeleported()))
     {
         SetNextCheckDelay(sPlayerbotAIConfig.GlobalCoolDown);
@@ -1881,6 +2125,9 @@ bool PlayerbotAI::HasTargetExclusions() const
 
 bool PlayerbotAI::DoSpecificAction(std::string const name, Event event, bool silent, std::string const qualifier)
 {
+    if (IsSelfBotSessionInactive())
+        return false;
+
     std::ostringstream out;
 
     for (uint8 i = 0; i < BOT_STATE_MAX; i++)
@@ -3668,6 +3915,9 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget)
     if (!target)
         target = bot;
 
+    if (IsSelfBotSessionInactive() && (itemTarget || !IsSelfBotDefenseSpell(this, spellId, target)))
+        return false;
+
     if (!IsValidUnit(target))
         return false;
 
@@ -3962,6 +4212,9 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget)
 
 bool PlayerbotAI::CastSpell(uint32 spellId, float x, float y, float z, Item* itemTarget)
 {
+    if (IsSelfBotSessionInactive())
+        return false;
+
     if (!spellId)
         return false;
 
@@ -6920,6 +7173,28 @@ SpellFamilyNames PlayerbotAI::Class2SpellFamilyName(uint8 cls)
 
 void PlayerbotAI::AddTimedEvent(std::function<void()> callback, uint32 delayMs)
 {
+    if (sPlayerbotAIConfig.SelfBotStopOnDisconnect && IsSelfBot(bot))
+    {
+        if (IsSelfBotSessionInactive())
+            return;
+
+        if (!_selfBotSessionToken)
+            _selfBotSessionToken = std::make_shared<uint8>(0);
+
+        std::weak_ptr<uint8> const sessionToken = _selfBotSessionToken;
+        ObjectGuid const botGuid = bot->GetGUID();
+        callback = [sessionToken, botGuid, callback = std::move(callback)]()
+        {
+            if (sessionToken.expired())
+                return;
+
+            Player* player = ObjectAccessor::FindPlayer(botGuid);
+            PlayerbotAI* botAI = player ? GET_PLAYERBOT_AI(player) : nullptr;
+            if (botAI && !botAI->IsSelfBotSessionInactive())
+                callback();
+        };
+    }
+
     class LambdaEvent final : public BasicEvent
     {
         std::function<void()> _cb;

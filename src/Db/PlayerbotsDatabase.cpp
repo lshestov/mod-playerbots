@@ -125,6 +125,21 @@ void PlayerbotsDatabaseConnection::DoPrepareStatements()
     PrepareStatement(PLAYERBOTS_DEL_RANDOM_BOTS_BY_EVENT, "DELETE FROM playerbots_random_bots WHERE event = ?", CONNECTION_SYNCH);
 
     PrepareStatement(PLAYERBOTS_SEL_TEXT_CHANCE, "SELECT name, probability FROM ai_playerbot_texts_chance", CONNECTION_SYNCH);
+
+    PrepareStatement(PLAYERBOTS_SEL_SELFBOT_SETTINGS,
+                     "SELECT schema_version, revision, sell_qualities, vendor_free_slots, auto_train, "
+                     "training_reserve_copper, 1 AS present "
+                     "FROM playerbots_selfbot_settings WHERE guid = ? AND account_id = ? "
+                     "UNION ALL SELECT 1, 1, 0, 4, 0, 0, 0 ORDER BY present DESC LIMIT 1", CONNECTION_SYNCH);
+    PrepareStatement(PLAYERBOTS_INS_SELFBOT_SETTINGS,
+                     "INSERT INTO playerbots_selfbot_settings "
+                     "(guid, account_id, schema_version, revision, sell_qualities, vendor_free_slots, auto_train, "
+                     "training_reserve_copper) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                     "ON DUPLICATE KEY UPDATE guid = guid", CONNECTION_BOTH);
+    PrepareStatement(PLAYERBOTS_UPD_SELFBOT_SETTINGS,
+                     "UPDATE playerbots_selfbot_settings SET revision = ?, sell_qualities = ?, vendor_free_slots = ?, "
+                     "auto_train = ?, training_reserve_copper = ? "
+                     "WHERE guid = ? AND account_id = ? AND schema_version = ? AND revision = ?", CONNECTION_BOTH);
 }
 PlayerbotsDatabaseConnection::PlayerbotsDatabaseConnection(MySQLConnectionInfo& connInfo) : MySQLConnection(connInfo)
 {

@@ -23,12 +23,15 @@
 #include "PlayerbotAIConfig.h"
 #include "PlayerbotCommandScript.h"
 #include "PlayerbotGuildMgr.h"
+#include "PlayerbotMgr.h"
 #include "PlayerbotSpellRepository.h"
 #include "PlayerbotWorldThreadProcessor.h"
 #include "RandomPlayerbotMgr.h"
 #include "ScriptMgr.h"
 #include "ServerScript.h"
 #include "SessionScript.h"
+#include "SelfBotQuestCatalog.h"
+#include "SelfBotQuestStrategy.h"
 #include "WorldScript.h"
 #include "cmath"
 
@@ -127,21 +130,16 @@ public:
 class PlayerbotsPlayerScript : public PlayerScript
 {
 public:
-    PlayerbotsPlayerScript() : PlayerScript("PlayerbotsPlayerScript", {
-        PLAYERHOOK_ON_LOGIN,
-        PLAYERHOOK_ON_BEFORE_LOGOUT,
-        PLAYERHOOK_ON_AFTER_UPDATE,
-        PLAYERHOOK_ON_CREATURE_KILL_CREDIT,
-        PLAYERHOOK_ON_BEFORE_PETITION_SIGN,
-        PLAYERHOOK_ON_BEFORE_CRITERIA_PROGRESS,
-        PLAYERHOOK_ON_BEFORE_ACHI_COMPLETE,
-        PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT,
-        PLAYERHOOK_CAN_PLAYER_USE_GROUP_CHAT,
-        PLAYERHOOK_CAN_PLAYER_USE_GUILD_CHAT,
-        PLAYERHOOK_CAN_PLAYER_USE_CHANNEL_CHAT,
-        PLAYERHOOK_ON_GIVE_EXP,
-        PLAYERHOOK_ON_BEFORE_TELEPORT
-    }) {}
+    PlayerbotsPlayerScript()
+        : PlayerScript("PlayerbotsPlayerScript",
+                       {PLAYERHOOK_ON_LOGIN, PLAYERHOOK_ON_BEFORE_LOGOUT, PLAYERHOOK_ON_SAVE,
+                        PLAYERHOOK_ON_BEFORE_UPDATE, PLAYERHOOK_ON_AFTER_UPDATE, PLAYERHOOK_ON_CREATURE_KILL_CREDIT,
+                        PLAYERHOOK_ON_BEFORE_PETITION_SIGN, PLAYERHOOK_ON_BEFORE_CRITERIA_PROGRESS,
+                        PLAYERHOOK_ON_BEFORE_ACHI_COMPLETE, PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT,
+                        PLAYERHOOK_CAN_PLAYER_USE_GROUP_CHAT, PLAYERHOOK_CAN_PLAYER_USE_GUILD_CHAT,
+                        PLAYERHOOK_CAN_PLAYER_USE_CHANNEL_CHAT, PLAYERHOOK_ON_GIVE_EXP, PLAYERHOOK_ON_BEFORE_TELEPORT})
+    {
+    }
 
     void OnPlayerLogin(Player* player) override
     {
@@ -173,6 +171,12 @@ public:
 
     void OnPlayerBeforeLogout(Player* player) override
     {
+        if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(player))
+        {
+            botAI->RestoreSelfBotPetState();
+            PreserveSelfBotQuestPetState(botAI);
+        }
+
         if (PlayerbotMgr* playerbotMgr = GET_PLAYERBOT_MGR(player))
         {
             PlayerbotAI* botAI = PlayerbotsMgr::instance().GetPlayerbotAI(player);
@@ -182,6 +186,16 @@ public:
         }
 
         sRandomPlayerbotMgr.OnPlayerLogout(player);
+    }
+
+    void OnPlayerSave(Player* player) override
+    {
+        // The next AI tick reapplies the temporary passive state after pet persistence.
+        if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(player))
+        {
+            botAI->RestoreSelfBotPetState();
+            PreserveSelfBotQuestPetState(botAI);
+        }
     }
 
     void OnPlayerCreatureKillCredit(Player* player, Creature* killed) override
@@ -245,6 +259,15 @@ public:
         return true;
     }
 
+    void OnPlayerBeforeUpdate(Player* player, uint32 /*diff*/) override
+    {
+        if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(player))
+        {
+            botAI->UpdateSelfBotSessionState();
+            UpdateSelfBotQuestState(botAI);
+        }
+    }
+
     void OnPlayerAfterUpdate(Player* player, uint32 diff) override
     {
         PlayerbotAI* const botAI = PlayerbotsMgr::instance().GetPlayerbotAI(player);
@@ -264,6 +287,19 @@ public:
 
     bool OnPlayerCanUseChat(Player* player, uint32 type, uint32 lang, std::string& msg, Player* receiver) override
     {
+        // The HUD can inspect only its own character, including while SelfBot is disabled.
+        if (type == CHAT_MSG_WHISPER && lang == LANG_ADDON && player == receiver &&
+            msg.compare(0, 8, "IDLEBOT\t") == 0)
+        {
+            if (msg == "IDLEBOT\tSTATUS")
+                PlayerbotMgr::SendSelfBotStatus(player);
+            else if (PlayerbotMgr* manager = GET_PLAYERBOT_MGR(player))
+                manager->GetBotProtocol().HandleRequest(*player, manager->GetSelfBotController(), msg.substr(8));
+            else
+                BotProtocol::SendUnavailable(*player, msg.substr(8));
+            return false;
+        }
+
         if (type != CHAT_MSG_WHISPER || lang == LANG_ADDON)
         {
             return true;
@@ -452,7 +488,10 @@ public:
     {
         if (Player* player = session->GetPlayer())
             if (PlayerbotMgr* playerbotMgr = GET_PLAYERBOT_MGR(player))
+            {
+                playerbotMgr->GetSelfBotController().UpdateSettings();
                 playerbotMgr->UpdateSessions();
+            }
     }
 };
 
@@ -538,6 +577,9 @@ public:
 
         LOG_INFO("server.loading", "Loading gather node index...");
         GatherNodeMgr::instance().Load();
+
+        if (sPlayerbotAIConfig.SelfBotQuesting)
+            SelfBotQuestCatalog::Instance().Initialize();
 
         LOG_INFO("server.loading", "Playerbots World Thread Processor initialized");
     }

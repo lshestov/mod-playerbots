@@ -8,14 +8,18 @@
 #include "PlayerbotsDatabase.h"
 #include "BroadcastHelper.h"
 #include "ChannelMgr.h"
+#include "Chat.h"
 #include "CharacterCache.h"
 #include "CharacterPackets.h"
 #include "Common.h"
 #include "Containers.h"
 #include "DatabaseEnv.h"
+#include "DBCStores.h"
 #include "Define.h"
+#include "GameObjectData.h"
 #include "Group.h"
 #include "GuildMgr.h"
+#include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "ObjectGuid.h"
 #include "ObjectMgr.h"
@@ -70,6 +74,25 @@ private:
 
 std::unordered_set<ObjectGuid> BotInitGuard::botsBeingInitialized;
 std::unordered_map<ObjectGuid, PendingBotLogin> PlayerbotHolder::botLoading;
+
+void PlayerbotMgr::SendSelfBotStatus(Player* player, std::string const& note)
+{
+    if (!player || !player->GetSession() || player->GetSession()->IsSocketClosed())
+        return;
+
+    PlayerbotMgr* manager = sPlayerbotsMgr.GetPlayerbotMgr(player);
+    if (!manager)
+    {
+        BotStatusSnapshot snapshot;
+        snapshot.Note = "SelfBot control is unavailable.";
+        BotProtocol::SendLegacyStatus(*player, snapshot);
+        return;
+    }
+
+    BotStatusSnapshot snapshot = manager->GetSelfBotController().GetStatus(*player);
+    snapshot.Note = note;
+    BotProtocol::SendLegacyStatus(*player, snapshot);
+}
 
 PlayerbotHolder::PlayerbotHolder() : PlayerbotAIBase(false) {}
 class PlayerbotLoginQueryHolder : public LoginQueryHolder
@@ -1099,26 +1122,36 @@ std::vector<std::string> PlayerbotHolder::HandlePlayerbotCommand(char const* arg
 
     if (!strcmp(cmd, "self"))
     {
-        if (GET_PLAYERBOT_AI(master))
+        PlayerbotMgr* manager = sPlayerbotsMgr.GetPlayerbotMgr(master);
+        if (!manager)
         {
-            messages.push_back("SelfBot is now deactivated.");
-            delete GET_PLAYERBOT_AI(master);
-
-            if (master->isTaxiCheater())
-                master->SetTaxiCheater(false);
-        }
-        else if (sPlayerbotAIConfig.SelfBotLevel == 0)
-            messages.push_back("SelfBot is disabled server-wide.");
-        else if (sPlayerbotAIConfig.SelfBotLevel == 1 && !master->CanBeGameMaster())
-            messages.push_back("SelfBot is restricted for this account.");
-        else
-        {
-            messages.push_back("SelfBot is now active.");
-            PlayerbotsMgr::instance().AddPlayerbotData(master, true);
-            GET_PLAYERBOT_AI(master)->SetMaster(master);
-            PlayerbotRepository::instance().Load(GET_PLAYERBOT_AI(master));
+            messages.push_back("SelfBot control is unavailable.");
+            return messages;
         }
 
+        bool const explicitControl = charname != nullptr;
+        bool const status = explicitControl && !strcmp(charname, "status");
+        bool const start = explicitControl && !strcmp(charname, "start");
+        bool const stop = explicitControl && !strcmp(charname, "stop");
+        if (explicitControl && ((!status && !start && !stop) || genderArg))
+        {
+            messages.push_back("usage: self [start|stop|status]");
+            return messages;
+        }
+
+        if (status)
+        {
+            PlayerbotMgr::SendSelfBotStatus(master);
+            return messages;
+        }
+
+        SelfBotController& controller = manager->GetSelfBotController();
+        bool const shouldStop = stop || (!explicitControl && GET_PLAYERBOT_AI(master));
+        SelfBotCommandResult const result =
+            shouldStop ? controller.Stop(*master, explicitControl) : controller.Start(*master);
+        PlayerbotMgr::SendSelfBotStatus(master, result.Message);
+        if (!explicitControl && !result.Message.empty())
+            messages.push_back(result.Message);
         return messages;
     }
 

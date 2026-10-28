@@ -32,6 +32,9 @@
 #include "FishValues.h"
 #include "Formations.h"
 #include "GrindTargetValue.h"
+#include "SellGrayStrategy.h"
+#include "SelfBotQuestStrategy.h"
+#include "SelfBotTrainerStrategy.h"
 #include "GroupLeaderValue.h"
 #include "GroupValues.h"
 #include "GuildValues.h"
@@ -104,6 +107,10 @@ public:
     ValueContext()
     {
         creators["active spell"] = &ValueContext::active_spell;
+        creators["gray vendor state"] = &ValueContext::GrayVendorState;
+        creators["selfbot quest state"] = &ValueContext::SelfBotQuestState;
+        creators["selfbot trainer state"] = &ValueContext::SelfBotTrainerState;
+        creators["gray vendor needed"] = &ValueContext::GrayVendorNeeded;
         creators["craft"] = &ValueContext::craft;
         creators["collision"] = &ValueContext::collision;
         creators["skip spells list"] = &ValueContext::skip_spells_list_value;
@@ -333,6 +340,10 @@ public:
     }
 
 private:
+    static UntypedValue* GrayVendorState(PlayerbotAI* botAI) { return new GrayVendorStateValue(botAI); }
+    static UntypedValue* SelfBotQuestState(PlayerbotAI* botAI) { return new SelfBotQuestStateValue(botAI); }
+    static UntypedValue* SelfBotTrainerState(PlayerbotAI* botAI) { return new SelfBotTrainerStateValue(botAI); }
+    static UntypedValue* GrayVendorNeeded(PlayerbotAI* botAI) { return new GrayVendorNeededValue(botAI); }
     static UntypedValue* party_member_without_water(PlayerbotAI* botAI)
     {
         return new PartyMemberWithoutWaterValue(botAI);

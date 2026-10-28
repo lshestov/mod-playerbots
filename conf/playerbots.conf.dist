@@ -196,6 +196,33 @@ Playerbots.SummonWhenGroup = 1
 # Selfbot permission level (0 = disabled, 1 = GM only (default), 2 = all players, 3 = activate on login)
 Playerbots.SelfBotLevel = 1
 
+# Stop farming when the server detects a closed client socket. Finish only combat already active at disconnect,
+# using single-target attacks and self-healing, then pause until reconnect. No new pulls, looting or vendor trips.
+# Accepted logout requests pause immediately. Pets are passive while disconnected.
+# Resume automatically after reconnect/logout cancellation. Does not affect headless bots or remove combat danger.
+# Network failures without a TCP close are detected by the core's normal connection timeout.
+# Default: 0 (disabled)
+Playerbots.SelfBotStopOnDisconnect = 0
+
+# Build a world quest catalog for the opt-in "selfbot quest" strategy.
+# Requires a restart when enabling. Uses ordinary quest rules, movement and rewards.
+# Chooses eligible, safe quests by level and local groups without a prescribed zone order.
+# Supports kill, loot, delivery and quest area-trigger exploration; other scripted events remain unsupported.
+# Collects within fixed 150-yard hubs (up to six active quests) and groups objectives within 100 yards.
+# Searches nearby opportunities first, up to 2400 yards. Low-XP work has a 600-yard travel budget.
+# Weighs native XP, progress, follow-ups, route distance and threats; prefers lower levels among useful tasks.
+# Considers objective and turn-in distance before accepting a quest; preserves current visits and local groups.
+# Requires a complete route before travel and rejects elite/overlevel hostile aggro corridors.
+# Quest item use requires proven spell effects and target conditions; verifies native progress after each use.
+# Infers bounded weakening, transformation and summon plans from native spell, condition and SmartAI data.
+# Area-limited summons require verified objective locations; unknown scripts and ambiguous outcomes are deferred.
+# Excludes seasonal quests and event-bound quest sources, regardless of whether their event is active.
+# Rechecks upcoming route danger every five seconds; unknown or over-budget route checks defer the task.
+# Defers quests and hostile targets more than three levels above the player; ready turn-ins stay eligible.
+# Discovers outdoor maps automatically. Execution uses walking routes on the current map; no inter-map transport.
+# Disabled by default; enable the strategy in the character's noncombat profile too.
+Playerbots.SelfBotQuesting = 0
+
 # Non-GM player can only use init=auto to initialize bots based on their own level and gearscore
 # Default: 0 (non-GM player can use any intialization commands)
 Playerbots.AutoInitOnly = 0
@@ -1391,6 +1418,10 @@ Playerbots.RandomBotNonCombatStrategies = ""
 # Additional altbot strategies
 # Strategies added here are applied to all altbots, in addition (or subtraction) to spec/role-based default strategies.
 # These rules are processed after the defaults.
+# Optional "+sell gray": sell poor-quality bag items at a nearby vendor when bags reach 75% full,
+# then return to the starting location. Equipped items and other qualities are kept.
+# Optional "+selfbot trainer": selfbots walk to a nearby class trainer and buy available spells
+# with their own money. Questing resumes after training; combat, recovery and selling take priority.
 Playerbots.CombatStrategies = ""
 Playerbots.NonCombatStrategies = ""
 

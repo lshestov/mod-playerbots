@@ -412,6 +412,8 @@ public:
     bool DeleteRandomBotArenaTeams;
 
     uint32 SelfBotLevel;
+    bool SelfBotStopOnDisconnect = false;
+    bool SelfBotQuesting = false;
     bool DowngradeMaxLevelBot;
     bool EquipAndSpecPersistence;
     int32 EquipAndSpecPersistenceLevel;

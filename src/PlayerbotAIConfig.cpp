@@ -757,6 +757,8 @@ bool PlayerbotAIConfig::Initialize()
     RandomBotArenaTeamMinRating = sConfigMgr->GetOption<int32>("Playerbots.RandomBotArenaTeamMinRating", 1000);
 
     SelfBotLevel = sConfigMgr->GetOption<int32>("Playerbots.SelfBotLevel", 1);
+    SelfBotStopOnDisconnect = sConfigMgr->GetOption<bool>("Playerbots.SelfBotStopOnDisconnect", false);
+    SelfBotQuesting = sConfigMgr->GetOption<bool>("Playerbots.SelfBotQuesting", false);
 
     RandomPlayerbotFactory::LoadLocalizedNameColumns();
     RandomPlayerbotFactory::CreateRandomBots();

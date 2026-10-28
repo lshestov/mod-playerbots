@@ -7,6 +7,8 @@
 #ifndef PLAYERBOTS_SHAREDVALUECONTEXT_H
 #define PLAYERBOTS_SHAREDVALUECONTEXT_H
 
+#include <mutex>
+
 #include "LootValues.h"
 #include "NamedObjectContext.h"
 #include "PlayerbotAI.h"
@@ -26,15 +28,8 @@ public:
     template <class T>
     Value<T>* getGlobalValue(std::string const name)
     {
-        // should never reach here
-        SharedNamedObjectContextList<UntypedValue> sValueContexts;
-        sValueContexts.Add(this);
-        NamedObjectContextList<UntypedValue> valueContexts(sValueContexts);
-        PlayerbotAI* botAI = new PlayerbotAI();
-
-        UntypedValue* value = valueContexts.GetContextObject(name, botAI);
-        delete botAI;
-        return dynamic_cast<Value<T>*>(value);
+        std::lock_guard<std::recursive_mutex> lock(_creationMutex);
+        return dynamic_cast<Value<T>*>(NamedObjectContext<UntypedValue>::create(name, &_globalAI));
     }
 
     template <class T>
@@ -63,7 +58,11 @@ private:
         creators["quest guidp map"] = &SharedValueContext::quest_guidp_map;
         creators["quest givers"] = &SharedValueContext::quest_givers;
     }
-    ~SharedValueContext() = default;
+    ~SharedValueContext() { Clear(); }
+
+    // Values retain AI references; destroy them before the backing AI and let this context own their cache.
+    PlayerbotAI _globalAI;
+    std::recursive_mutex _creationMutex;
 
     SharedValueContext(SharedValueContext const&) = delete;
     SharedValueContext& operator=(SharedValueContext const&) = delete;
@@ -79,7 +78,6 @@ private:
     static UntypedValue* entry_quest_relation(PlayerbotAI* botAI) { return new EntryQuestRelationMapValue(botAI); }
     static UntypedValue* quest_guidp_map(PlayerbotAI* botAI) { return new QuestGuidpMapValue(botAI); }
     static UntypedValue* quest_givers(PlayerbotAI* botAI) { return new QuestGiversValue(botAI); }
-
 };
 
 #define sSharedValueContext SharedValueContext::instance()

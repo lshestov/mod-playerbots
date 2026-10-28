@@ -7,6 +7,9 @@
 #ifndef PLAYERBOTS_PLAYERBOTAI_H
 #define PLAYERBOTS_PLAYERBOTAI_H
 
+#include <memory>
+#include <stack>
+
 #include "Chat.h"
 #include "ChatFilter.h"
 #include "ChatHelper.h"
@@ -24,7 +27,6 @@
 #include "SpellAuras.h"
 #include "Util.h"
 #include "WorldPacket.h"
-#include <stack>
 
 class Action;
 class AiObjectContext;
@@ -45,6 +47,7 @@ class WorldPosition;
 
 struct CreatureData;
 struct GameObjectData;
+struct SelfBotDisconnectState;
 
 enum StrategyType : uint32;
 
@@ -356,6 +359,7 @@ public:
     void AddHandler(uint16 opcode, std::string const handler);
     void Handle(ExternalEventHelper& helper);
     void AddPacket(WorldPacket const& packet);
+    void Clear() { queue = {}; }
 
 private:
     std::map<uint16, std::string> handlers;
@@ -404,6 +408,11 @@ public:
     virtual ~PlayerbotAI();
 
     void UpdateAI(uint32 elapsed, bool minimal = false) override;
+    bool UpdateSelfBotSessionState();
+    bool IsSelfBotSessionInactive() const;
+    bool IsSelfBotDefending() const;
+    bool IsSelfBotDefenseTarget(Unit const* target) const;
+    void RestoreSelfBotPetState();
     void UpdateAIInternal(uint32 elapsed, bool minimal = false) override;
     bool UpdateAIReaction(uint32 elapsed, bool minimal, bool canControlSelf);
     Engine* GetCurrentEngine() const { return currentEngine; }
@@ -632,6 +641,12 @@ private:
     static void _fillGearScoreData(Player* player, Item* item, std::vector<uint32>* gearScore, uint32& twoHandScore,
                                    bool mixed = false);
     bool IsTellAllowed(PlayerbotSecurityLevel securityLevel = PLAYERBOT_SECURITY_ALLOW_ALL);
+    void StopSelfBotActions();
+    void UpdateSelfBotDefense(uint32 elapsed);
+    Unit* GetSelfBotDefenseTarget() const;
+    bool _selfBotSessionSuspended = false;
+    std::unique_ptr<SelfBotDisconnectState> _selfBotDisconnect;
+    std::shared_ptr<uint8> _selfBotSessionToken;
     void UpdateAIGroupMaster();
     Item* FindItemInInventory(std::function<bool(ItemTemplate const*)> checkItem) const;
     void HandleCommands();
